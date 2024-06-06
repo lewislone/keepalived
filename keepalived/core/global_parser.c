@@ -157,6 +157,21 @@ bfd_process_name_handler(const vector_t *strvec)
 }
 #endif
 static void
+use_symlink_path_handler(const vector_t *strvec)
+{
+	int res = true;
+
+	if (vector_size(strvec) >= 2) {
+		res = check_true_false(strvec_slot(strvec,1));
+		if (res < 0) {
+			report_config_error(CONFIG_GENERAL_ERROR, "Invalid value '%s' for global use_symlink_path specified", strvec_slot(strvec, 1));
+			return;
+		}
+	}
+
+	global_data->use_symlinks = res;
+}
+static void
 routerid_handler(const vector_t *strvec)
 {
 	if (vector_size(strvec) < 2) {
@@ -173,10 +188,11 @@ emailfrom_handler(const vector_t *strvec)
 	if (vector_size(strvec) < 2) {
 		report_config_error(CONFIG_GENERAL_ERROR, "emailfrom missing - ignoring");
 		return;
-	}
+	} else if (vector_size(strvec) > 2)
+		report_config_error(CONFIG_GENERAL_ERROR, "emailfrom - ignoring extra entries '%s' ...", strvec_slot(strvec, 2));
 
 	FREE_CONST_PTR(global_data->email_from);
-	global_data->email_from = set_value(strvec);
+	global_data->email_from = format_email_addr(strvec_slot(strvec, 1));
 }
 static void
 smtpto_handler(const vector_t *strvec)
@@ -253,17 +269,14 @@ email_handler(const vector_t *strvec)
 {
 	const vector_t *email_vec = read_value_block(strvec);
 	unsigned int i;
-	char *str;
 
 	if (!email_vec) {
 		report_config_error(CONFIG_GENERAL_ERROR, "Warning - empty notification_email block");
 		return;
 	}
 
-	for (i = 0; i < vector_size(email_vec); i++) {
-		str = vector_slot(email_vec, i);
-		alloc_email(str);
-	}
+	for (i = 0; i < vector_size(email_vec); i++)
+		alloc_email(vector_slot(email_vec, i));
 
 	free_strvec(email_vec);
 }
@@ -1321,12 +1334,32 @@ vrrp_check_unicast_src_handler(__attribute__((unused)) const vector_t *strvec)
 static void
 vrrp_check_adv_addr_handler(__attribute__((unused)) const vector_t *strvec)
 {
-	global_data->vrrp_skip_check_adv_addr = 1;
+	int res = true;
+
+	if (vector_size(strvec) >= 2) {
+		res = check_true_false(strvec_slot(strvec,1));
+		if (res < 0) {
+			report_config_error(CONFIG_GENERAL_ERROR, "Invalid value '%s' for global vrrp_check_adv_addr specified", strvec_slot(strvec, 1));
+			return;
+		}
+	}
+
+	global_data->vrrp_skip_check_adv_addr = res;
 }
 static void
 vrrp_strict_handler(__attribute__((unused)) const vector_t *strvec)
 {
-	global_data->vrrp_strict = 1;
+	int res = true;
+
+	if (vector_size(strvec) >= 2) {
+		res = check_true_false(strvec_slot(strvec,1));
+		if (res < 0) {
+			report_config_error(CONFIG_GENERAL_ERROR, "Invalid value '%s' for global vrrp_strict specified", strvec_slot(strvec, 1));
+			return;
+		}
+	}
+
+	global_data->vrrp_strict = res;
 }
 static void
 vrrp_prio_handler(const vector_t *strvec)
@@ -1593,6 +1626,28 @@ static void
 snmp_checker_handler(__attribute__((unused)) const vector_t *strvec)
 {
 	global_data->enable_snmp_checker = true;
+}
+static void
+snmp_vs_stats_update_interval_handler(const vector_t *strvec)
+{
+	unsigned long interval;
+
+	/* Valid range is 1 ms to 30s */
+	if (read_timer(strvec, 1, &interval, 1000, 30 * TIMER_HZ, true))
+		global_data->snmp_vs_stats_update_interval = interval;
+	else
+		report_config_error(CONFIG_GENERAL_ERROR, "snmp stats vs update interval '%s' invalid - ignoring", strvec_slot(strvec, 1));
+}
+static void
+snmp_rs_stats_update_interval_handler(const vector_t *strvec)
+{
+	unsigned long interval;
+
+	/* Valid range is 1 ms to 30s */
+	if (read_timer(strvec, 1, &interval, 1000, 30 * TIMER_HZ, true))
+		global_data->snmp_rs_stats_update_interval = interval;
+	else
+		report_config_error(CONFIG_GENERAL_ERROR, "snmp stats vs update interval '%s' invalid - ignoring", strvec_slot(strvec, 1));
 }
 #endif
 #endif
@@ -2349,6 +2404,7 @@ init_global_keywords(bool global_active)
 #ifdef _WITH_BFD_
 	install_keyword("bfd_process_name", &bfd_process_name_handler);
 #endif
+	install_keyword("use_symlink_paths", &use_symlink_path_handler);
 	install_keyword("router_id", &routerid_handler);
 	install_keyword("notification_email_from", &emailfrom_handler);
 	install_keyword("smtp_server", &smtpserver_handler);
@@ -2481,6 +2537,8 @@ init_global_keywords(bool global_active)
 #endif
 #ifdef _WITH_SNMP_CHECKER_
 	install_keyword("enable_snmp_checker", &snmp_checker_handler);
+	install_keyword("snmp_vs_stats_update_interval", &snmp_vs_stats_update_interval_handler);
+	install_keyword("snmp_rs_stats_update_interval", &snmp_rs_stats_update_interval_handler);
 #endif
 #endif
 #ifdef _WITH_DBUS_

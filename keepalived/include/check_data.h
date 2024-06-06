@@ -58,7 +58,8 @@ typedef enum {
 	TCP_INDEX,
 	UDP_INDEX,
 	SCTP_INDEX,
-	PROTO_INDEX_MAX
+	PROTO_INDEX_NONE,
+	PROTO_INDEX_MAX = PROTO_INDEX_NONE
 } proto_index_t;
 #endif
 
@@ -204,7 +205,6 @@ typedef struct _virtual_server {
 							   if not set on real servers */
 	int				weight;
 	list_head_t			rs;		/* real_server_t */
-	unsigned			rs_cnt;		/* Number of real_server in list */
 	int				alive;
 	bool				alpha;		/* Set if alpha mode is default. */
 	bool				omega;		/* Omega mode enabled. */
@@ -222,9 +222,12 @@ typedef struct _virtual_server {
 	int				smtp_alert;	/* Send email on status change */
 	bool				quorum_state_up; /* Reflects result of the last transition done. */
 	bool				reloaded;	/* quorum_state was copied from old config while reloading */
-#if defined(_WITH_SNMP_CHECKER_)
+#if defined _WITH_SNMP_CHECKER_
 	/* Statistics */
-	time_t				lastupdated;
+	struct timespec			vs_stats_last_updated;
+	struct timespec			rs_stats_last_updated;
+	unsigned			rs_cnt;		/* Number of real_server in list */
+	unsigned			num_dests;	/* Only needed if using old socket interface */
 #ifndef _WITH_LVS_64BIT_STATS_
 	struct ip_vs_stats_user		stats;
 #else
@@ -274,8 +277,14 @@ real_weight(int64_t effective_weight)
 }
 
 #ifdef _WITH_NFTABLES_
+
+/* We need to ensure that the file/function/line logged relates to where
+ * protocol_to_index() is called from.
+ */
+#define protocol_to_index(proto)	protocol_to_index_flf(proto, __func__, __LINE__, __FILE__)
+
 static inline proto_index_t
-protocol_to_index(int proto)
+protocol_to_index_flf(int proto, const char *func, int line, const char *file)
 {
 	if (proto == IPPROTO_TCP)
 		return TCP_INDEX;
@@ -284,7 +293,7 @@ protocol_to_index(int proto)
 	if (proto == IPPROTO_SCTP)
 		return SCTP_INDEX;
 
-	log_message(LOG_INFO, "Unknown protocol %d at %s:%d in %s", proto, __func__, __LINE__, __FILE__);
+	log_message(LOG_INFO, "Unknown protocol %d in protocol_to_index() called from %s at %s:%d", proto, func, file, line);
 
 	return UDP_INDEX;
 }

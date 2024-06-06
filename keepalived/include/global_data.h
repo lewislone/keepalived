@@ -75,7 +75,7 @@ extern void _start(void), etext(void);
 
 /* email link list */
 typedef struct _email {
-	char				*addr;
+	const char			*addr;
 
 	/* Linked list member */
 	list_head_t			e_list;
@@ -120,6 +120,7 @@ typedef struct _data {
 	unsigned			startup_script_timeout;
 	notify_script_t			*shutdown_script;
 	unsigned			shutdown_script_timeout;
+	bool				use_symlinks;
 #ifndef _ONE_PROCESS_DEBUG_
 	const char			*reload_check_config;	/* log file name for validating new configuration before reloading */
 	const char			*reload_time_file;
@@ -248,8 +249,10 @@ typedef struct _data {
 	bool				enable_snmp_rfcv3;
 #endif
 #endif
-#ifdef _WITH_LVS_
+#ifdef _WITH_SNMP_CHECKER_
 	bool				enable_snmp_checker;
+	unsigned long			snmp_vs_stats_update_interval;
+	unsigned long			snmp_rs_stats_update_interval;
 #endif
 #endif
 #ifdef _WITH_DBUS_
@@ -298,6 +301,7 @@ extern data_t *global_data;	/* Global configuration data */
 extern data_t *old_global_data;	/* Old global configuration data - used during reload */
 
 /* Prototypes */
+extern const char * format_email_addr(const char *);
 extern void alloc_email(const char *);
 extern data_t *alloc_global_data(void);
 extern void init_global_data(data_t *, data_t *, bool);

@@ -386,7 +386,7 @@ get_entry(unsigned int id, list_head_t *l, const char* file_name, const rt_entry
 	return ret_buf;
 }
 
-#if HAVE_DECL_FRA_SUPPRESS_IFGROUP
+#if HAVE_DECL_FRA_SUPPRESS_IFGROUP && defined _WITH_SNMP_VRRP_
 const char *
 get_rttables_group(uint32_t id)
 {

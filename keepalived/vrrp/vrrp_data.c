@@ -192,8 +192,12 @@ dump_notify_script(FILE *fp, const notify_script_t *script, const char *type)
 	if (!script)
 		return;
 
-	conf_write(fp, "   %s state transition script = %s, uid:gid %u:%u"
-		     , type, cmd_str(script), script->uid, script->gid);
+	if (script->path)
+		conf_write(fp, "   %s state transition script = %s, params = %s, uid:gid %u:%u"
+			     , type, script->path, cmd_str(script), script->uid, script->gid);
+	else
+		conf_write(fp, "   %s state transition script = %s, uid:gid %u:%u"
+			     , type, cmd_str(script), script->uid, script->gid);
 }
 
 static void
@@ -275,7 +279,7 @@ free_vscript(vrrp_script_t *vscript)
 	list_del_init(&vscript->e_list);
 	free_tracking_obj_list(&vscript->tracking_vrrp);
 	FREE_CONST(vscript->sname);
-	FREE_PTR(vscript->script.args);
+	notify_free_script(&vscript->script);
 	FREE(vscript);
 }
 static void
@@ -293,6 +297,8 @@ dump_vscript(FILE *fp, const vrrp_script_t *vscript)
 
 	conf_write(fp, " VRRP Script = %s", vscript->sname);
 	conf_write(fp, "   Command = %s", cmd_str(&vscript->script));
+	if (vscript->script.path)
+		conf_write(fp, "   Path = %s", vscript->script.path);
 	conf_write(fp, "   Interval = %lu sec", vscript->interval / TIMER_HZ);
 	conf_write(fp, "   Timeout = %lu sec", vscript->timeout / TIMER_HZ);
 	conf_write(fp, "   Weight = %d%s", vscript->weight, vscript->weight_reverse ? " reverse" : "");
@@ -648,10 +654,6 @@ dump_vrrp(FILE *fp, const vrrp_t *vrrp)
 					vrrp->ll_addr[0], vrrp->ll_addr[1], vrrp->ll_addr[2], vrrp->ll_addr[3], vrrp->ll_addr[4], vrrp->ll_addr[5],
 					__test_bit(VRRP_VMAC_MAC_USE_VRID, &vrrp->flags) ? " (using VRID)" : "");
 	}
-	if (__test_bit(VRRP_VMAC_NETLINK_NOTIFY, &vrrp->flags))
-		conf_write(fp, "   Force netlink update for base interface");
-	if (__test_bit(VRRP_VMAC_ADDR_BIT, &vrrp->flags))
-		conf_write(fp, "   Use VMAC for VIPs on other interfaces");
 #ifdef _HAVE_VRRP_IPVLAN_
 	else if (__test_bit(VRRP_IPVLAN_BIT, &vrrp->flags))
 		conf_write(fp, "   Use IPVLAN, i/f %s, is_up = %s%s%s, type %s",
@@ -666,6 +668,20 @@ dump_vrrp(FILE *fp, const vrrp_t *vrrp)
 #endif
 					);
 #endif
+
+	/* The following two flags should only be set on VMACs, but
+	 * we check them for any interface type, just incase ... */
+	if (__test_bit(VRRP_VMAC_NETLINK_NOTIFY, &vrrp->flags))
+		conf_write(fp, "     Force netlink update for base interface");
+	if (__test_bit(VRRP_VMAC_ADDR_BIT, &vrrp->flags))
+		conf_write(fp, "     Use VMAC for VIPs on other interfaces");
+
+	/* The following should only be specified for VMACs and ipvlans */
+	if (__test_bit(VRRP_VMAC_GROUP, &vrrp->flags))
+		conf_write(fp, "     Interface group %u", vrrp->vmac_group);
+	else if (vrrp->ifp->base_ifp->group)
+		conf_write(fp, "     Interface group %u (copied from parent)", vrrp->ifp->base_ifp->group);
+
 	if (vrrp->ifp && vrrp->ifp->is_ours) {
 		conf_write(fp, "   Interface = %s, %s on %s%s", IF_NAME(vrrp->ifp),
 				__test_bit(VRRP_VMAC_BIT, &vrrp->flags) ? "vmac" : "ipvlan",

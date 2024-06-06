@@ -469,19 +469,15 @@ dump_tracking_rs(FILE *fp, const void *data)
 	conf_write(fp, "     %s -> %s, weight %d%s", FMT_VS(checker->vs), FMT_RS(checker->rs, checker->vs), top->weight, top->weight_multiplier == -1 ? " reverse" : "");
 }
 
-static const char *
-format_decimal(unsigned long val, int dp)
+static void
+dump_notify_vs_rs_script(FILE *fp, const notify_script_t *script, const char *type, const char *state)
 {
-	static char buf[22];	/* Sufficient for 2^64 as decimal plus decimal point */
-	unsigned dp_factor = 1;
-	int i;
-
-	for (i = 0; i < dp; i++)
-		dp_factor *= 10;
-
-	snprintf(buf, sizeof(buf), "%lu.%*.*lu", val / dp_factor, dp, dp, val % dp_factor);
-
-	return buf;
+	if (script->path)
+		conf_write(fp, "   %s %s notify script = %s, params = %s, uid:gid %u:%u", type, state,
+			    script->path, cmd_str(script), script->uid, script->gid);
+	else
+		conf_write(fp, "   %s %s notify script = %s, uid:gid %u:%u", type, state,
+			    cmd_str(script), script->uid, script->gid);
 }
 
 static void
@@ -511,11 +507,9 @@ dump_rs(FILE *fp, const real_server_t *rs)
 	conf_write(fp, "   Inhibit on failure is %s", rs->inhibit ? "ON" : "OFF");
 
 	if (rs->notify_up)
-		conf_write(fp, "     RS up notify script = %s, uid:gid %u:%u",
-				cmd_str(rs->notify_up), rs->notify_up->uid, rs->notify_up->gid);
+		dump_notify_vs_rs_script(fp, rs->notify_up, "RS", "up");
 	if (rs->notify_down)
-		conf_write(fp, "     RS down notify script = %s, uid:gid %u:%u",
-				cmd_str(rs->notify_down), rs->notify_down->uid, rs->notify_down->gid);
+		dump_notify_vs_rs_script(fp, rs->notify_down, "RS", "down");
 	if (rs->virtualhost)
 		conf_write(fp, "    VirtualHost = '%s'", rs->virtualhost);
 #ifdef _WITH_SNMP_CHECKER_
@@ -715,7 +709,7 @@ dump_vs(FILE *fp, const virtual_server_t *vs)
 		conf_write(fp, "   protocol = UDP");
 	else if (vs->service_type == IPPROTO_SCTP)
 		conf_write(fp, "   protocol = SCTP");
-	else if (vs->service_type == 0)
+	else if (vs->service_type == IPPROTO_IP)
 		conf_write(fp, "   protocol = none");
 	else
 		conf_write(fp, "   protocol = %d", vs->service_type);
@@ -730,11 +724,9 @@ dump_vs(FILE *fp, const virtual_server_t *vs)
 	conf_write(fp, "   Inhibit on failure is %s", vs->inhibit ? "ON" : "OFF");
 	conf_write(fp, "   quorum = %u, hysteresis = %u", vs->quorum, vs->hysteresis);
 	if (vs->notify_quorum_up)
-		conf_write(fp, "   Quorum up notify script = %s, uid:gid %u:%u",
-			    cmd_str(vs->notify_quorum_up), vs->notify_quorum_up->uid, vs->notify_quorum_up->gid);
+		dump_notify_vs_rs_script(fp, vs->notify_quorum_up, "Quorum", "up");
 	if (vs->notify_quorum_down)
-		conf_write(fp, "   Quorum down notify script = %s, uid:gid %u:%u",
-			    cmd_str(vs->notify_quorum_down), vs->notify_quorum_down->uid, vs->notify_quorum_down->gid);
+		dump_notify_vs_rs_script(fp, vs->notify_quorum_down, "Quorum", "down");
 	if (vs->ha_suspend)
 		conf_write(fp, "   Using HA suspend");
 	conf_write(fp, "   Using smtp notification = %s", vs->smtp_alert ? "yes" : "no");
@@ -755,8 +747,10 @@ dump_vs(FILE *fp, const virtual_server_t *vs)
 				    , FMT_RS(vs->s_svr, vs));
 		dump_forwarding_method(fp, "  ", vs->s_svr);
 		conf_write(fp, "     Inhibit on failure is %s", vs->s_svr->inhibit ? "ON" : "OFF");
+		conf_write(fp, "     set = %d", vs->s_svr->set);
+		conf_write(fp, "     alive = %d", vs->s_svr->alive);
 	}
-	conf_write(fp, "   alive = %d", vs->alive);
+	conf_write(fp, "   VS alive = %d", vs->alive);
 	conf_write(fp, "   quorum_state_up = %d", vs->quorum_state_up);
 	conf_write(fp, "   reloaded = %d", vs->reloaded);
 
@@ -1167,7 +1161,9 @@ validate_check_config(void)
 				if (rs_iseq(rs, rs1)) {
 					report_config_error(CONFIG_GENERAL_ERROR, "VS %s: real server %s is duplicated - removing second rs", FMT_VS(vs), FMT_RS(rs, vs));
 					free_rs(rs);
+#ifdef _WITH_SNMP_CHECKER_
 					vs->rs_cnt--;
+#endif
 					rs_removed = true;
 					break;
 				}

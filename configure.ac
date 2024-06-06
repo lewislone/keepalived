@@ -94,7 +94,7 @@ m4_ifndef([AS_VAR_COPY],
 
 dnl ----[ Process this file with autoconf to produce a configure script ]----
 AC_PREREQ([2.63])
-AC_INIT([Keepalived], [2.2.8], [keepalived-users@groups.io], [], [http://www.keepalived.org/])
+AC_INIT([Keepalived], [2.3.1], [keepalived-users@groups.io], [], [http://www.keepalived.org/])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_MACRO_DIR([m4])
 AM_INIT_AUTOMAKE([-Wall -Werror -Woverride foreign])
@@ -189,6 +189,8 @@ AC_ARG_ENABLE(clang,
   [AS_HELP_STRING([--enable-clang], [use clang compiler])])
 AC_ARG_ENABLE(lto,
   [AS_HELP_STRING([--enable-lto], [use Link Time Optimisation])])
+AC_ARG_ENABLE(reproducible-build,
+  [AS_HELP_STRING([--enable-reproducible-build], [make builds reproducible])])
 AC_ARG_WITH(init,
   [AS_HELP_STRING([--with-init=(upstart|systemd|SYSV|SUSE|openrc)], [specify init type])],
   [init_type="$withval"], [init_type=""])
@@ -356,7 +358,7 @@ AS_IF([test -n "$with_samples_dir"],
     AS_IF([test $with_samples_dir = yes -o $with_samples_dir = no],
 	  [AC_MSG_ERROR([--with-samples-dir requires a directory])])
     SAMPLES_DIR=$with_samples_dir
-  ],[SAMPLES_DIR="\$(sysconfdir)/$PACKAGE/samples"])
+  ],[SAMPLES_DIR="\${sysconfdir}/$PACKAGE/samples"])
 AC_SUBST([SAMPLES_DIR])
 
 CPPFLAGS="$kernelinc $CPPFLAGS"
@@ -1140,37 +1142,49 @@ AC_LINK_IFELSE([AC_LANG_SOURCE([[
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h limits.h netdb.h netinet/in.h stdint.h stdlib.h string.h sys/ioctl.h sys/param.h sys/prctl.h sys/socket.h sys/time.h syslog.h unistd.h],
   [], [AC_MSG_ERROR([Missing/unusable system header file <$ac_header>])])
+AS_IF([test .$enable_lvs != .no],
+  [AC_CHECK_HEADERS([net/if_arp.h],
+    [], [AC_MSG_ERROR([Missing/unusable <$ac_header> - is glibc headers package installed?])])
+  ])
 
 # check for kernel headers
 SAV_CPPFLAGS="$CPPFLAGS"
 CPPFLAGS="$CPPFLAGS $kernelinc"
 
-dnl -- linux/errqueue.h need sys/time.h before Linux < v5.1
-AC_MSG_CHECKING([linux/errqueue.h needs sys/time.h])
-AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
-  #include <fcntl.h>
-  #include <linux/errqueue.h>
+AC_CHECK_HEADERS([linux/types.h],
+  [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header> - is kernel headers package installed?])])
+AS_IF([test .$enable_vrrp != .no],
+  [
+    AC_CHECK_HEADERS([linux/ethtool.h linux/if_ether.h linux/if_packet.h linux/ip.h linux/sockios.h],
+      [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header> - is kernel headers package installed?])])
+    AC_CHECK_HEADERS([linux/fib_rules.h linux/if_addr.h linux/if_link.h],
+      [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header> - is kernel headers package installed?])],
+      [[$NETLINK_EXTRA_INCLUDE]])
+  ])
+AS_IF([test .$enable_lvs != .no],
+  [
+    AC_CHECK_HEADERS([linux/icmp.h linux/icmpv6.h linux/errqueue.h],
+      [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header> - is kernel headers package installed?])])
 
-  int main(void)
-  {
-  }
-  ]])],
-  [
-    AC_MSG_RESULT([no])
-  ],
-  [
-    AC_MSG_RESULT([yes])
-    AC_DEFINE([ERRQUEUE_NEEDS_SYS_TIME], [ 1 ], [Define to 1 if linux/errqueue.h needs sys/time.h])
+    dnl -- linux/errqueue.h need sys/time.h before Linux < v5.1
+    AC_MSG_CHECKING([linux/errqueue.h needs sys/time.h])
+    AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
+      #include <fcntl.h>
+      #include <linux/errqueue.h>
+
+      int main(void)
+      {
+      }
+      ]])],
+      [
+	AC_MSG_RESULT([no])
+      ],
+      [
+	AC_MSG_RESULT([yes])
+	AC_DEFINE([ERRQUEUE_NEEDS_SYS_TIME], [ 1 ], [Define to 1 if linux/errqueue.h needs sys/time.h])
+      ])
   ])
 
-AC_CHECK_HEADERS([asm/types.h linux/ethtool.h linux/icmpv6.h linux/if_ether.h linux/if_packet.h linux/ip.h linux/sockios.h linux/types.h],
-  [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header>])])
-AC_CHECK_HEADERS([linux/fib_rules.h linux/if_addr.h linux/if_link.h],
-  [], [AC_MSG_ERROR([Missing/unusable kernel header file <$ac_header>])],
-  [[$NETLINK_EXTRA_INCLUDE]])
-AC_CHECK_HEADERS([linux/if_arp.h],
-  [], [AC_MSG_ERROR([Missing/unusable <$ac_header>])],
-  [[#include <sys/socket.h>]])
 CPPFLAGS="$SAV_CPPFLAGS"
 
 # Checks for typedefs, structures, and compiler characteristics.
@@ -1303,7 +1317,7 @@ AC_CHECK_DECLS([IPV6_MULTICAST_ALL],
   [
     add_system_opt([IPV6_MULTICAST_ALL])
 
-    # We can't include <linux/in6.h> before <netinet/in.h> otherwise there a a lot of
+    # We can't include <linux/in6.h> before <netinet/in.h> otherwise there are a lot of
     #   duplicate definitions. If we include them the other way around and <netinet/in.h>
     #   doesn't define IPV6_MULTICAST_ALL, then we don't get the definition from
     #   <linux/in6.h> due to the UAPI guards to stop compile errors.
@@ -1493,6 +1507,7 @@ dnl ----[ Checks for libraries ]----
 NETLINK_VER=0
 IPVS_USE_NL=No
 if test .$enable_lvs != .no -a .${enable_libnl} != .no; then
+  dnl -- IPVS netlink support since linux 2.6.28 - 24/12/08
   $PKG_CONFIG --exists libnl-3.0
   if test $? -eq 0; then
     add_pkg_config([libnl-3.0], [NL3], [remove-requires])
@@ -3078,6 +3093,20 @@ AS_IF([test $? -eq 0],
   ])
 WANT_PREFIX=0
 FOUND_PREFIX=0
+
+# $prefix defaults to NONE, which we need to get rid of
+sysconfdir_real=${sysconfdir}
+# while [[[ $sysconfdir_real =~ '\${' ]]]; do
+# 	eval sysconfdir_real=$sysconfdir_real
+# done
+sysconfdir_sav=${sysconfdir_real}
+eval sysconfdir_real=$sysconfdir_real
+while [[ $sysconfdir_real != $sysconfdir_sav ]]; do
+	sysconfdir_sav=${sysconfdir_real}
+	eval sysconfdir_real=$sysconfdir_real
+done
+
+AS_IF([test ${sysconfdir_real:0:5} = "NONE/"], [ sysconfdir_real=${sysconfdir_real:4} ])
 AS_IF([test -n "$default_config_file"],
   [
     AS_IF([test $default_config_file = yes -o $default_config_file = no],
@@ -3088,11 +3117,15 @@ AS_IF([test -n "$default_config_file"],
 	CONFIG_FILE="$default_config_file"
 	WANT_PREFIX=1
       ],
-      [CONFIG_FILE="\$(sysconfdir)/$PACKAGE/$default_config_file"])
+      [
+        CONFIG_FILE=${sysconfdir_real}/$PACKAGE/$default_config_file
+      ])
     add_config_opt([DEFAULT_CONFIG_FILE=$CONFIG_FILE])
     default_config_file=$CONFIG_FILE
   ],
-  [default_config_file="\$(sysconfdir)/$PACKAGE/$PACKAGE.conf"])
+  [
+    default_config_file=${sysconfdir_real}/$PACKAGE/$PACKAGE.conf
+  ])
 dir=`echo $default_config_file | $SED -e "s|/[[^/]]*$||"`
 name=`echo $default_config_file | $SED -e "s|.*/||"`
 AC_SUBST([DEFAULT_CONFIG_FILE], [$default_config_file])
@@ -3121,12 +3154,22 @@ AC_DEFINE_UNQUOTED([DEFAULT_CONFIG_FILE], ["$dcf"], [The default configuration f
 
 # Remove a leading ${prefix} since that is not part of the old file name
 eval dcf_old=`echo $default_config_file`
-dcf_old=`echo $dcf_old | $SED -e "s|^\\\${prefix}||"`
+dcf_old=`echo $dcf_old | $SED -e "s|^${prefix}||"`
 AS_IF([test .$dcf != .$dcf_old],
   [
     AC_DEFINE_UNQUOTED([OLD_DEFAULT_CONFIG_FILE], ["$dcf_old"], [The old default configuration file])
     AC_SUBST([OLD_DEFAULT_CONFIG_FILE], [$dcf_old])
   ])
+
+AS_IF([test .$enable_reproducible_build = .yes],
+  [
+    AC_DEFINE([_REPRODUCIBLE_BUILD_], [ 1 ], [Make the build reproducible])
+    KEEPALIVED_CONFIG_OPTIONS="$args"
+    AC_SUBST([KEEPALIVED_CONFIG_OPTIONS])
+    primary_config_opts=${sysconfdir_real}/$PACKAGE/$PACKAGE.config-opts
+    AC_DEFINE_UNQUOTED([CONFIG_OPTS_FILE_PRIMARY], ["$primary_config_opts"], [Primary file to read build config options from])
+  ])
+AM_CONDITIONAL([REPRODUCIBLE_BUILD], [test .$enable_reproducible_build = .yes])
 
 if test -z "$INIT_TYPE"; then
   INIT_TYPE=undetected
